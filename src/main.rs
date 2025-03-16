@@ -1,11 +1,12 @@
 mod parser;
+mod transformer;
 mod translator;
-mod validator;
 
 use std::fs::read_to_string;
 
 use chumsky::Parser;
 use parser::{parse_program, parse_tokens};
+use transformer::transform;
 use translator::translate;
 
 fn main() {
@@ -16,19 +17,30 @@ fn main() {
 			return;
 		}
 	};
-	let source = read_to_string(source_file).expect("file should exist");
+	let source = read_to_string(&source_file).expect("file should exist");
 	let res = parse_tokens().parse(source);
 	let tokens = match res {
 		Ok(tokens) => tokens,
-		Err(_errs) => {
+		Err(errs) => {
+			eprintln!("{:#?}", errs);
 			return;
 		}
 	};
-	let ast = parse_program().parse(tokens);
+	let (ast, ast_errors) = parse_program().parse_recovery(tokens);
+	if !ast_errors.is_empty() {
+		for err in ast_errors {
+			eprintln!("{err:#?}");
+		}
+	}
 	let ast = match ast {
-		Ok(ast) => ast,
-		Err(_errs) => return,
+		Some(ast) => ast,
+		None => return,
 	};
+	if let Err(issues) = transform(&ast) {
+		eprintln!("Semantic issue: {:#?}", issues);
+		return;
+	}
+	// println!("{:#?}", ast);
 	let il = translate(&ast);
 	println!("{}", il);
 }

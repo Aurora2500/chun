@@ -1,9 +1,22 @@
-use crate::parser::{Expr, FnBody, Program, Stmt};
+use std::fmt::Display;
 
-#[derive(Debug, Clone)]
+use crate::parser::{Expr, FnBody, Program, Stmt, TopLevelDef};
+
+#[derive(Debug, Clone, Copy)]
 enum TempVar<'a> {
 	Intermediate(u8),
 	Named(&'a str),
+	Constant(i32),
+}
+
+impl Display for TempVar<'_> {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			Self::Intermediate(x) => write!(f, "%temp_{}", x),
+			Self::Named(x) => write!(f, "%var_{}", x),
+			Self::Constant(x) => write!(f, "{}", x),
+		}
+	}
 }
 
 impl<'a> TempVar<'a> {
@@ -13,17 +26,6 @@ impl<'a> TempVar<'a> {
 
 	fn from_var(name: &'a str) -> Self {
 		Self::Named(name)
-	}
-
-	fn refer(&self, il: &mut String) {
-		match self {
-			Self::Intermediate(x) => {
-				il.push_str(&std::format!("%temp_{}", x));
-			}
-			Self::Named(x) => {
-				il.push_str(&std::format!("%var_{}", x));
-			}
-		}
 	}
 }
 
@@ -40,48 +42,54 @@ impl Ctx {
 	}
 }
 
-fn translate_expr<'a>(expr: &'a Expr, ctx: &mut Ctx, il: &mut String) -> TempVar<'a> {
+fn translate_expr<'a>(
+	expr: &'a Expr,
+	immediate: Option<TempVar<'a>>,
+	ctx: &mut Ctx,
+	il: &mut String,
+) -> TempVar<'a> {
 	match expr {
 		Expr::Literal(x) => {
-			let temp = ctx.new_intermediate();
-			il.push_str("\t");
-			temp.refer(il);
-			il.push_str(&std::format!(" = w copy {}\n", x));
-			return temp;
+			if let Some(var) = immediate {
+				il.push_str(&format!("\t{var} = w copy {x}\n"));
+			}
+			TempVar::Constant(*x)
 		}
-		Expr::Var(x) => TempVar::from_var(&x),
+		Expr::Var(x) => {
+			let old_var = TempVar::from_var(&x);
+			if let Some(var) = immediate {
+				il.push_str(&format!("\t{var} = w copy {old_var}"));
+			}
+			old_var
+		}
 		Expr::Add { lhs, rhs } => {
-			let lhs_var = translate_expr(lhs, ctx, il);
-			let rhs_var = translate_expr(rhs, ctx, il);
-			let temp = ctx.new_intermediate();
-			il.push_str("\t");
-			temp.refer(il);
-			il.push_str(" = w add ");
-			lhs_var.refer(il);
-			il.push_str(", ");
-			rhs_var.refer(il);
-			il.push_str("\n");
+			let lhs_var = translate_expr(&lhs.0, None, ctx, il);
+			let rhs_var = translate_expr(&rhs.0, None, ctx, il);
+			let var = if let Some(var) = immediate {
+				var
+			} else {
+				ctx.new_intermediate()
+			};
+			il.push_str(&format!("\t{var} = w add {lhs_var}, {rhs_var}\n"));
 
-			return temp;
+			var
 		}
 		Expr::FnCall { func, params } => {
 			let param_vars: Vec<TempVar<'a>> = params
 				.iter()
-				.map(|expr| translate_expr(expr, ctx, il))
+				.map(|expr| translate_expr(&expr.0, None, ctx, il))
 				.collect();
-			let temp = ctx.new_intermediate();
-			il.push_str("\t");
-			temp.refer(il);
-			il.push_str(" = w call $");
-			il.push_str(func);
-			il.push_str(" (");
+			let var = if let Some(var) = immediate {
+				var
+			} else {
+				ctx.new_intermediate()
+			};
+			il.push_str(&format!("\t{var} = w call ${} (", func.0));
 			for v in param_vars {
-				il.push_str("w ");
-				v.refer(il);
-				il.push_str(", ");
+				il.push_str(&format!("w {v}, "));
 			}
 			il.push_str(")\n");
-			return temp;
+			var
 		}
 	}
 }
@@ -89,16 +97,15 @@ fn translate_expr<'a>(expr: &'a Expr, ctx: &mut Ctx, il: &mut String) -> TempVar
 fn translate_stmt(stmt: &Stmt, ctx: &mut Ctx, il: &mut String) {
 	match stmt {
 		Stmt::Expr(expr) => {
-			translate_expr(expr, ctx, il);
+			translate_expr(&expr.0, None, ctx, il);
 		}
-		Stmt::Binding { ident, value } => {
-			let expr_var = translate_expr(value, ctx, il);
-			let new_var = TempVar::from_var(ident);
-			il.push_str("\t");
-			new_var.refer(il);
-			il.push_str(" = w copy ");
-			expr_var.refer(il);
-			il.push_str("\n");
+		Stmt::Binding {
+			ident,
+			r#type: _,
+			value,
+		} => {
+			let new_var = TempVar::from_var(&ident.0);
+			translate_expr(&value.0, Some(new_var), ctx, il);
 		}
 	}
 }
@@ -106,34 +113,36 @@ fn translate_stmt(stmt: &Stmt, ctx: &mut Ctx, il: &mut String) {
 pub fn translate(ast: &Program) -> String {
 	let mut il = String::new();
 
-	for func in ast.0.iter() {
+	for top_level_def in ast.0.iter() {
+		let func = match top_level_def {
+			TopLevelDef::Fn(func) => func,
+			TopLevelDef::Extern(_) => continue,
+		};
 		let mut ctx = Ctx::default();
 
 		il.push_str("export function w $");
-		il.push_str(&func.ident);
+		il.push_str(&func.ident.0);
 		il.push_str("(");
 		for param in func.params.iter() {
 			il.push_str("w %var_");
-			il.push_str(&param.name);
+			il.push_str(&param.0.name.0);
 			il.push_str(", ");
 		}
 		il.push_str(") {\n");
 		il.push_str("@entry\n");
-		match &func.body {
+		match &func.body.0 {
 			FnBody::Lambda(expr) => {
-				let var = translate_expr(expr, &mut ctx, &mut il);
-				il.push_str("\tret ");
-				var.refer(&mut il);
-				il.push_str("\n");
+				let var = translate_expr(&expr.0, None, &mut ctx, &mut il);
+				il.push_str(&format!("\tret {}\n", var));
 			}
 			FnBody::Block(stmts) => {
 				for stmt in stmts {
-					translate_stmt(stmt, &mut ctx, &mut il);
+					translate_stmt(&stmt.0, &mut ctx, &mut il);
 				}
 				il.push_str("\tret 0\n");
 			}
 		}
-		il.push_str("}\n");
+		il.push_str("}\n\n");
 	}
 
 	il
