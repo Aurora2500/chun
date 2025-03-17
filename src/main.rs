@@ -22,6 +22,7 @@ fn main() {
 	let tokens = match res {
 		Ok(tokens) => tokens,
 		Err(errs) => {
+			eprintln!("Tokenization error:");
 			eprintln!("{:#?}", errs);
 			return;
 		}

@@ -3,10 +3,10 @@ pub mod error;
 use std::ops::Range;
 
 use chumsky::{
-	prelude::{choice, end, just},
+	prelude::{choice, end, just, take_until},
 	recursive::recursive,
 	select,
-	text::{digits, ident, keyword, TextParser},
+	text::{digits, ident, keyword, newline, TextParser},
 	Parser, Stream,
 };
 
@@ -32,34 +32,90 @@ pub enum Token {
 	Ident(String),
 	Fn,
 	Extern,
+	Return,
+	While,
+	If,
 	Let,
 	FatArrow,
 	Colon,
 	Semicolon,
 	Comma,
-	Eq,
+	Assign,
 	OpenBracket,
 	CloseBracket,
 	OpenParen,
 	CloseParen,
 	Plus,
+	Minus,
+	Star,
+	Div,
+	Rem,
+	Inc,
+	Dec,
+	Eq,
+	Ineq,
+	Lt,
+	Leq,
+	Gt,
+	Geq,
+	And,
+	Or,
+	Xor,
+	Not,
+}
+
+macro_rules! span_keyword {
+	($kw:expr, $token: expr) => {
+		keyword($kw).map_with_span(|_, span| ($token, span))
+	};
+}
+
+macro_rules! span_just {
+	($sym:expr, $token: expr) => {
+		just($sym).map_with_span(|_, span| ($token, span))
+	};
 }
 
 pub fn parse_tokens() -> impl Parser<char, SpanVec<Token>, Error = ParserError<char>> {
+	// let single_line = just("//").then(take_until(newline())).ignored();
+	// let multi_line = just("/*").then(take_until(just("*/"))).ignored();
 	choice((
-		keyword("fn").map_with_span(|_, span| (Token::Fn, span)),
-		keyword("let").map_with_span(|_, span| (Token::Let, span)),
-		keyword("extern").map_with_span(|_, span| (Token::Extern, span)),
-		just("=>").map_with_span(|_, span| (Token::FatArrow, span)),
-		just(':').map_with_span(|_, span| (Token::Colon, span)),
-		just(';').map_with_span(|_, span| (Token::Semicolon, span)),
-		just(',').map_with_span(|_, span| (Token::Comma, span)),
-		just('=').map_with_span(|_, span| (Token::Eq, span)),
-		just('{').map_with_span(|_, span| (Token::OpenBracket, span)),
-		just('}').map_with_span(|_, span| (Token::CloseBracket, span)),
-		just('(').map_with_span(|_, span| (Token::OpenParen, span)),
-		just(')').map_with_span(|_, span| (Token::CloseParen, span)),
-		just('+').map_with_span(|_, span| (Token::Plus, span)),
+		choice((
+			span_keyword!("fn", Token::Fn),
+			span_keyword!("let", Token::Let),
+			span_keyword!("extern", Token::Extern),
+			span_keyword!("return", Token::Return),
+			span_keyword!("if", Token::If),
+			span_keyword!("while", Token::While),
+		)),
+		span_just!("=>", Token::FatArrow),
+		choice((
+			span_just!("==", Token::Eq),
+			span_just!("!=", Token::Ineq),
+			span_just!("<=", Token::Leq),
+			span_just!(">=", Token::Geq),
+			span_just!("&&", Token::And),
+			span_just!("||", Token::Or),
+			span_just!('^', Token::Xor),
+			span_just!('!', Token::Not),
+			span_just!('<', Token::Lt),
+			span_just!('>', Token::Gt),
+			span_just!("++", Token::Inc),
+			span_just!("--", Token::Dec),
+			span_just!('+', Token::Plus),
+			span_just!('-', Token::Minus),
+			span_just!('*', Token::Star),
+			span_just!('/', Token::Div),
+			span_just!('%', Token::Rem),
+		)),
+		span_just!(':', Token::Colon),
+		span_just!(';', Token::Semicolon),
+		span_just!(',', Token::Comma),
+		span_just!('=', Token::Assign),
+		span_just!('{', Token::OpenBracket),
+		span_just!('}', Token::CloseBracket),
+		span_just!('(', Token::OpenParen),
+		span_just!(')', Token::CloseParen),
 		ident().map_with_span(|x, span| (Token::Ident(x), span)),
 		digits(10)
 			.from_str::<i32>()
@@ -67,16 +123,33 @@ pub fn parse_tokens() -> impl Parser<char, SpanVec<Token>, Error = ParserError<c
 			.map_with_span(|x, span| (Token::Literal(x), span)),
 	))
 	.padded()
+	// .padded_by(single_line.or(multi_line))
 	.repeated()
 	.map(SpanVec)
 	.then_ignore(end())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Binop {
+	Add,
+	Sub,
+	Mul,
+	Div,
+	Rem,
+	Eq,
+	Uneq,
+	Lt,
+	Leq,
+	Gt,
+	Geq,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Expr {
 	Var(String),
 	Literal(i32),
-	Add {
+	Binop {
+		op: Binop,
 		lhs: Box<Spanned<Expr>>,
 		rhs: Box<Spanned<Expr>>,
 	},
@@ -103,11 +176,15 @@ fn parse_expr() -> impl Parser<Token, Spanned<Expr>, Error = ParserError<Token>>
 			.map_with_span(|(func, params), span| (Expr::FnCall { func, params }, span));
 		let unary = choice((fncall.clone(), lit));
 		let add = unary
-			.then_ignore(just(Token::Plus))
+			.then(choice((
+				just(Token::Plus).to(Binop::Add),
+				just(Token::Minus).to(Binop::Sub),
+			)))
 			.then(expr)
-			.map_with_span(|(lhs, rhs), span| {
+			.map_with_span(|((lhs, op), rhs), span| {
 				(
-					Expr::Add {
+					Expr::Binop {
+						op,
 						lhs: Box::new(lhs),
 						rhs: Box::new(rhs),
 					},
@@ -126,6 +203,15 @@ pub enum Stmt {
 		value: Box<Spanned<Expr>>,
 	},
 	Expr(Box<Spanned<Expr>>),
+	Return(Box<Spanned<Expr>>),
+	While {
+		condition: Box<Spanned<Expr>>,
+		block: Vec<Spanned<Stmt>>,
+	},
+	If {
+		condition: Box<Spanned<Expr>>,
+		block: Vec<Spanned<Stmt>>,
+	},
 }
 
 fn parse_stmt() -> impl Parser<Token, Spanned<Stmt>, Error = ParserError<Token>> {
@@ -133,7 +219,7 @@ fn parse_stmt() -> impl Parser<Token, Spanned<Stmt>, Error = ParserError<Token>>
 		.ignore_then(select! {|span| Token::Ident(x) => (x, span)})
 		.then_ignore(just(Token::Colon))
 		.then(select!(|span| Token::Ident(x) => (x, span)).or_not())
-		.then_ignore(just(Token::Eq))
+		.then_ignore(just(Token::Assign))
 		.then(parse_expr())
 		.map_with_span(|((ident, r#type), value), span| {
 			(

@@ -62,7 +62,7 @@ fn translate_expr<'a>(
 			}
 			old_var
 		}
-		Expr::Add { lhs, rhs } => {
+		Expr::Binop { op, lhs, rhs } => {
 			let lhs_var = translate_expr(&lhs.0, None, ctx, il);
 			let rhs_var = translate_expr(&rhs.0, None, ctx, il);
 			let var = if let Some(var) = immediate {
@@ -107,6 +107,7 @@ fn translate_stmt(stmt: &Stmt, ctx: &mut Ctx, il: &mut String) {
 			let new_var = TempVar::from_var(&ident.0);
 			translate_expr(&value.0, Some(new_var), ctx, il);
 		}
+		_ => todo!(),
 	}
 }
 
