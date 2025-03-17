@@ -27,21 +27,19 @@ fn main() {
 			return;
 		}
 	};
-	let (ast, ast_errors) = parse_program().parse_recovery(tokens);
-	if !ast_errors.is_empty() {
-		for err in ast_errors {
-			eprintln!("{err:#?}");
+	let res = parse_program().parse(tokens);
+	let ast = match res {
+		Ok(ast) => ast,
+		Err(errs) => {
+			eprintln!("Parsing error:");
+			eprintln!("{:#?}", errs);
+			return;
 		}
-	}
-	let ast = match ast {
-		Some(ast) => ast,
-		None => return,
 	};
 	if let Err(issues) = transform(&ast) {
 		eprintln!("Semantic issue: {:#?}", issues);
 		return;
 	}
-	// println!("{:#?}", ast);
 	let il = translate(&ast);
 	println!("{}", il);
 }

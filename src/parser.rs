@@ -3,7 +3,7 @@ pub mod error;
 use std::ops::Range;
 
 use chumsky::{
-	prelude::{choice, end, just, take_until},
+	prelude::{choice, end, just, take_until, todo},
 	recursive::recursive,
 	select,
 	text::{digits, ident, keyword, newline, TextParser},
@@ -58,8 +58,8 @@ pub enum Token {
 	Leq,
 	Gt,
 	Geq,
-	And,
-	Or,
+	LogicAnd,
+	LogicOr,
 	Xor,
 	Not,
 }
@@ -94,8 +94,8 @@ pub fn parse_tokens() -> impl Parser<char, SpanVec<Token>, Error = ParserError<c
 			span_just!("!=", Token::Ineq),
 			span_just!("<=", Token::Leq),
 			span_just!(">=", Token::Geq),
-			span_just!("&&", Token::And),
-			span_just!("||", Token::Or),
+			span_just!("&&", Token::LogicAnd),
+			span_just!("||", Token::LogicOr),
 			span_just!('^', Token::Xor),
 			span_just!('!', Token::Not),
 			span_just!('<', Token::Lt),
@@ -159,6 +159,30 @@ pub enum Expr {
 	},
 }
 
+macro_rules! binary_op {
+	($atom:expr; $($from:expr => $to:expr),+ $(,)?) => {
+			$atom.clone().then(choice((
+				$(
+					just($from).to($to),
+				)+
+				))
+				.then($atom)
+				.repeated()
+			)
+			.foldl(|lhs, (op, rhs)| {
+				let span = lhs.1.start..rhs.1.end;
+				(
+					Expr::Binop {
+						op,
+						lhs: Box::new(lhs),
+						rhs: Box::new(rhs),
+					},
+					span,
+				)
+			})
+	};
+}
+
 fn parse_expr() -> impl Parser<Token, Spanned<Expr>, Error = ParserError<Token>> {
 	recursive(|expr| {
 		let lit = select! { |span|
@@ -173,24 +197,16 @@ fn parse_expr() -> impl Parser<Token, Spanned<Expr>, Error = ParserError<Token>>
 					.allow_trailing()
 					.delimited_by(just(Token::OpenParen), just(Token::CloseParen)),
 			)
-			.map_with_span(|(func, params), span| (Expr::FnCall { func, params }, span));
-		let unary = choice((fncall.clone(), lit));
-		let add = unary
-			.then(choice((
-				just(Token::Plus).to(Binop::Add),
-				just(Token::Minus).to(Binop::Sub),
-			)))
-			.then(expr)
-			.map_with_span(|((lhs, op), rhs), span| {
-				(
-					Expr::Binop {
-						op,
-						lhs: Box::new(lhs),
-						rhs: Box::new(rhs),
-					},
-					span,
-				)
+			.map_with_span(|(func, params), span: Range<usize>| {
+				(Expr::FnCall { func, params }, span)
 			});
+		let unary = choice((fncall.clone(), lit));
+		let mul = binary_op!(unary;
+			Token::Star => Binop::Mul,
+			Token::Div => Binop::Div,
+			Token::Rem => Binop::Rem,
+		);
+		let add = binary_op!(mul; Token::Plus => Binop::Add, Token::Minus => Binop::Sub);
 		choice((add, fncall, lit))
 	})
 }

@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crate::parser::{Expr, FnBody, Program, Stmt, TopLevelDef};
+use crate::parser::{Binop, Expr, FnBody, Program, Stmt, TopLevelDef};
 
 #[derive(Debug, Clone, Copy)]
 enum TempVar<'a> {
@@ -70,7 +70,15 @@ fn translate_expr<'a>(
 			} else {
 				ctx.new_intermediate()
 			};
-			il.push_str(&format!("\t{var} = w add {lhs_var}, {rhs_var}\n"));
+			let op = match *op {
+				Binop::Add => "add",
+				Binop::Sub => "sub",
+				Binop::Mul => "mul",
+				Binop::Div => "div",
+				Binop::Rem => "rem",
+				_ => todo!(),
+			};
+			il.push_str(&format!("\t{var} = w {op} {lhs_var}, {rhs_var}\n"));
 
 			var
 		}
