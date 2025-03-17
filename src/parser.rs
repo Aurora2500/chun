@@ -60,8 +60,11 @@ pub enum Token {
 	Geq,
 	LogicAnd,
 	LogicOr,
-	Xor,
 	Not,
+	BitAnd,
+	BitOr,
+	BitNot,
+	Xor,
 }
 
 macro_rules! span_keyword {
@@ -130,6 +133,15 @@ pub fn parse_tokens() -> impl Parser<char, SpanVec<Token>, Error = ParserError<c
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Unop {
+	Neg,
+	Not,
+	BitNot,
+	Ref,
+	Deref,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Binop {
 	Add,
 	Sub,
@@ -148,6 +160,10 @@ pub enum Binop {
 pub enum Expr {
 	Var(String),
 	Literal(i32),
+	Unop {
+		op: Unop,
+		expr: Box<Spanned<Expr>>,
+	},
 	Binop {
 		op: Binop,
 		lhs: Box<Spanned<Expr>>,
