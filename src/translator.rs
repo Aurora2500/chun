@@ -2,9 +2,9 @@ use std::fmt::Display;
 
 use crate::{
 	parser::{Binop, Unop},
-	transformer::{
+	types::{
 		ast::{self, Expr, ExprVariant, FnBody, Stmt},
-		types::{Float, Integral, Numeric, Primitive},
+		MonoType, Primitive,
 	},
 };
 
@@ -48,18 +48,22 @@ impl Ctx {
 	}
 }
 
-fn primitive_to_ty(p: Primitive) -> &'static str {
-	match p {
-		Primitive::Numeric(num) => match num {
-			Numeric::Integral(int) => match int {
-				Integral::I32 | Integral::U32 => "w",
-				Integral::I64 | Integral::U64 => "l",
-			},
-			Numeric::Float(float) => match float {
-				Float::Single => "s",
-				Float::Double => "d",
-			},
-		},
+fn mono_to_ty(m: MonoType) -> Option<&'static str> {
+	match m {
+		MonoType::Primitive(p) => Some(match p {
+			Primitive::I32 | Primitive::U32 => "w",
+			Primitive::I64 | Primitive::U64 => "l",
+			Primitive::F32 => "s",
+			Primitive::F64 => "d",
+		}),
+		_ => None,
+	}
+}
+
+fn assert_primitive(m: MonoType) -> Primitive {
+	match m {
+		MonoType::Primitive(p) => p,
+		MonoType::Unit => panic!("assert monotype to primitive failed"),
 	}
 }
 
@@ -68,25 +72,28 @@ fn translate_expr<'a>(
 	immediate: Option<TempVar<'a>>,
 	ctx: &mut Ctx,
 	il: &mut String,
-) -> TempVar<'a> {
+) -> Option<TempVar<'a>> {
 	let Expr { r#type, expr } = expr;
-	let val_type = primitive_to_ty(*r#type);
+	let val_type = mono_to_ty(r#type.clone());
 	match expr {
 		ExprVariant::Literal(x) => {
+			let val_type = val_type.unwrap();
 			if let Some(var) = immediate {
 				il.push_str(&format!("\t{var} = {val_type} copy {x}\n"));
 			}
-			TempVar::Constant(*x)
+			Some(TempVar::Constant(*x))
 		}
 		ExprVariant::Var(x) => {
+			let val_type = val_type.unwrap();
 			let old_var = TempVar::from_var(&x);
 			if let Some(var) = immediate {
 				il.push_str(&format!("\t{var} = {val_type} copy {old_var}"));
 			}
-			old_var
+			Some(old_var)
 		}
 		ExprVariant::Unop { op, expr } => {
-			let expr = translate_expr(&expr, None, ctx, il);
+			let val_type = val_type.unwrap();
+			let expr = translate_expr(&expr, None, ctx, il).expect("Unit used as value");
 			let var = if let Some(var) = immediate {
 				var
 			} else {
@@ -97,11 +104,12 @@ fn translate_expr<'a>(
 				_ => todo!(),
 			};
 			il.push_str(&format!("\t{var} = {val_type} {op} {expr}\n"));
-			var
+			Some(var)
 		}
 		ExprVariant::Binop { op, lhs, rhs } => {
-			let lhs_var = translate_expr(&lhs, None, ctx, il);
-			let rhs_var = translate_expr(&rhs, None, ctx, il);
+			let val_type = val_type.unwrap();
+			let lhs_var = translate_expr(&lhs, None, ctx, il).expect("unit used as value");
+			let rhs_var = translate_expr(&rhs, None, ctx, il).expect("unit used as value");
 			let var = if let Some(var) = immediate {
 				var
 			} else {
@@ -116,25 +124,40 @@ fn translate_expr<'a>(
 				_ => todo!(),
 			};
 			il.push_str(&format!("\t{var} = {val_type} {op} {lhs_var}, {rhs_var}\n"));
-			var
+			Some(var)
 		}
 		ExprVariant::FnCall { func, params } => {
-			let param_vars: Vec<(TempVar<'a>, Primitive)> = params
+			let param_vars: Vec<(Option<TempVar<'a>>, Primitive)> = params
 				.iter()
-				.map(|expr| (translate_expr(&expr, None, ctx, il), expr.r#type))
+				.map(|expr| {
+					(
+						translate_expr(&expr, None, ctx, il),
+						assert_primitive(expr.r#type.clone()),
+					)
+				})
 				.collect();
 			let var = if let Some(var) = immediate {
 				var
 			} else {
 				ctx.new_intermediate()
 			};
-			il.push_str(&format!("\t{var} = {val_type} call ${} (", func));
+			il.push('\t');
+			if let Some(val_type) = val_type {
+				il.push_str(&format!("{var} = {val_type} "));
+			}
+			il.push_str(&format!("call ${} (", func));
 			for (param, param_ty) in param_vars {
-				let param_ty = primitive_to_ty(param_ty);
+				let param_ty = mono_to_ty(MonoType::Primitive(param_ty))
+					.expect("param type shouldn't be unit");
+				let param = param.expect("param should be referable");
 				il.push_str(&format!("{param_ty} {param}, "));
 			}
 			il.push_str(")\n");
-			var
+			if val_type.is_some() {
+				Some(var)
+			} else {
+				None
+			}
 		}
 	}
 }
@@ -175,7 +198,11 @@ pub fn translate(ast: &ast::Program) -> String {
 		match &func.body {
 			FnBody::Lambda(expr) => {
 				let var = translate_expr(&expr, None, &mut ctx, &mut il);
-				il.push_str(&format!("\tret {}\n", var));
+				il.push_str("\tret");
+				if let Some(var) = var {
+					il.push_str(&format!(" {var}"));
+				}
+				il.push('\n');
 			}
 			FnBody::Block(stmts) => {
 				for stmt in stmts {

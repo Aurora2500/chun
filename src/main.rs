@@ -1,6 +1,7 @@
 mod parser;
 mod transformer;
 mod translator;
+mod types;
 
 use std::fs::read_to_string;
 

@@ -344,13 +344,23 @@ fn parse_fnbody() -> impl Parser<Token, Spanned<FnBody>, Error = ParserError<Tok
 pub struct FnSignature {
 	pub ident: Spanned<String>,
 	pub params: Vec<Spanned<FnParam>>,
+	pub return_type: Option<Spanned<String>>,
 }
 
 fn parse_fn_signature() -> impl Parser<Token, FnSignature, Error = ParserError<Token>> {
 	just(Token::Fn)
 		.ignore_then(select! {|span| Token::Ident(x) => (x, span)})
 		.then(parse_params())
-		.map(|(ident, params)| FnSignature { ident, params })
+		.then(
+			just(Token::Colon)
+				.ignore_then(select! {|span| Token::Ident(x) => (x, span)})
+				.or_not(),
+		)
+		.map(|((ident, params), return_type)| FnSignature {
+			ident,
+			params,
+			return_type,
+		})
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FnDef {
