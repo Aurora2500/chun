@@ -30,6 +30,7 @@ impl<'a, T: Clone + 'a + 'static>
 pub enum Token {
 	Literal(i32),
 	Ident(String),
+	Label(String),
 	Fn,
 	Extern,
 	Return,
@@ -41,6 +42,7 @@ pub enum Token {
 	Semicolon,
 	Comma,
 	Assign,
+	Wildcard,
 	OpenBracket,
 	CloseBracket,
 	OpenParen,
@@ -53,7 +55,7 @@ pub enum Token {
 	Inc,
 	Dec,
 	Eq,
-	Ineq,
+	Uneq,
 	Lt,
 	Leq,
 	Gt,
@@ -61,10 +63,11 @@ pub enum Token {
 	LogicAnd,
 	LogicOr,
 	Not,
-	BitAnd,
+	Amp,
 	BitOr,
 	BitNot,
 	Xor,
+	Scope,
 }
 
 macro_rules! span_keyword {
@@ -92,14 +95,18 @@ pub fn parse_tokens() -> impl Parser<char, SpanVec<Token>, Error = ParserError<c
 			span_keyword!("while", Token::While),
 		)),
 		span_just!("=>", Token::FatArrow),
+		span_just!("::", Token::Scope),
 		choice((
 			span_just!("==", Token::Eq),
-			span_just!("!=", Token::Ineq),
+			span_just!("!=", Token::Uneq),
 			span_just!("<=", Token::Leq),
 			span_just!(">=", Token::Geq),
 			span_just!("&&", Token::LogicAnd),
 			span_just!("||", Token::LogicOr),
 			span_just!('^', Token::Xor),
+			span_just!('&', Token::Amp),
+			span_just!('|', Token::BitOr),
+			span_just!('~', Token::BitNot),
 			span_just!('!', Token::Not),
 			span_just!('<', Token::Lt),
 			span_just!('>', Token::Gt),
@@ -115,6 +122,7 @@ pub fn parse_tokens() -> impl Parser<char, SpanVec<Token>, Error = ParserError<c
 		span_just!(';', Token::Semicolon),
 		span_just!(',', Token::Comma),
 		span_just!('=', Token::Assign),
+		span_just!('_', Token::Wildcard),
 		span_just!('{', Token::OpenBracket),
 		span_just!('}', Token::CloseBracket),
 		span_just!('(', Token::OpenParen),
@@ -124,6 +132,9 @@ pub fn parse_tokens() -> impl Parser<char, SpanVec<Token>, Error = ParserError<c
 			.from_str::<i32>()
 			.unwrapped()
 			.map_with_span(|x, span| (Token::Literal(x), span)),
+		ident()
+			.then_ignore(just(':'))
+			.map_with_span(|label, span| (Token::Label(label), span)),
 	))
 	.padded()
 	// .padded_by(single_line.or(multi_line))
@@ -132,7 +143,7 @@ pub fn parse_tokens() -> impl Parser<char, SpanVec<Token>, Error = ParserError<c
 	.then_ignore(end())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Unop {
 	Neg,
 	Not,
@@ -141,7 +152,7 @@ pub enum Unop {
 	Deref,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Binop {
 	Add,
 	Sub,
@@ -216,14 +227,38 @@ fn parse_expr() -> impl Parser<Token, Spanned<Expr>, Error = ParserError<Token>>
 			.map_with_span(|(func, params), span: Range<usize>| {
 				(Expr::FnCall { func, params }, span)
 			});
-		let unary = choice((fncall.clone(), lit));
+		let atom = choice((fncall.clone(), lit))
+			.or(expr.delimited_by(just(Token::OpenParen), just(Token::CloseParen)));
+		let unary = choice((
+			just(Token::Minus).to(Unop::Neg),
+			just(Token::Not).to(Unop::Not),
+			just(Token::BitNot).to(Unop::BitNot),
+			just(Token::Star).to(Unop::Deref),
+			just(Token::Amp).to(Unop::Ref),
+		))
+		.map_with_span(|unop, span: Range<usize>| (unop, span))
+		.repeated()
+		.then(atom)
+		.foldr(|(op, opspan), expr| {
+			let span = opspan.start..expr.1.end;
+			(
+				Expr::Unop {
+					op,
+					expr: Box::new(expr),
+				},
+				span,
+			)
+		});
 		let mul = binary_op!(unary;
 			Token::Star => Binop::Mul,
 			Token::Div => Binop::Div,
 			Token::Rem => Binop::Rem,
 		);
 		let add = binary_op!(mul; Token::Plus => Binop::Add, Token::Minus => Binop::Sub);
-		choice((add, fncall, lit))
+		let comp = binary_op!(add; Token::Lt => Binop::Lt, Token::Gt => Binop::Gt, Token::Leq => Binop::Leq, Token::Geq => Binop::Geq);
+		let eq = binary_op!(comp; Token::Eq => Binop::Eq, Token::Uneq => Binop::Uneq);
+
+		choice((eq, fncall, lit))
 	})
 }
 
@@ -235,7 +270,7 @@ pub enum Stmt {
 		value: Box<Spanned<Expr>>,
 	},
 	Expr(Box<Spanned<Expr>>),
-	Return(Box<Spanned<Expr>>),
+	Return(Option<Box<Spanned<Expr>>>),
 	While {
 		condition: Box<Spanned<Expr>>,
 		block: Vec<Spanned<Stmt>>,
@@ -319,19 +354,14 @@ fn parse_fn_signature() -> impl Parser<Token, FnSignature, Error = ParserError<T
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FnDef {
-	pub ident: Spanned<String>,
-	pub params: Vec<Spanned<FnParam>>,
+	pub sig: FnSignature,
 	pub body: Spanned<FnBody>,
 }
 
 fn parse_fn_def() -> impl Parser<Token, FnDef, Error = ParserError<Token>> {
 	parse_fn_signature()
 		.then(parse_fnbody())
-		.map(|(FnSignature { ident, params }, body)| FnDef {
-			ident,
-			params,
-			body,
-		})
+		.map(|(sig, body)| FnDef { sig, body })
 }
 
 fn parse_externfn() -> impl Parser<Token, FnSignature, Error = ParserError<Token>> {

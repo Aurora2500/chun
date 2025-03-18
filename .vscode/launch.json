@@ -1,0 +1,45 @@
+{
+	// Use IntelliSense to learn about possible attributes.
+	// Hover to view descriptions of existing attributes.
+	// For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"type": "lldb",
+			"request": "launch",
+			"name": "Debug executable 'chun'",
+			"cargo": {
+				"args": [
+					"build",
+					"--bin=chun",
+					"--package=chun"
+				],
+				"filter": {
+					"name": "chun",
+					"kind": "bin"
+				}
+			},
+			"args": ["woag.chun"],
+			"cwd": "${workspaceFolder}/build"
+		},
+		{
+			"type": "lldb",
+			"request": "launch",
+			"name": "Debug unit tests in executable 'chun'",
+			"cargo": {
+				"args": [
+					"test",
+					"--no-run",
+					"--bin=chun",
+					"--package=chun"
+				],
+				"filter": {
+					"name": "chun",
+					"kind": "bin"
+				}
+			},
+			"args": [],
+			"cwd": "${workspaceFolder}"
+		}
+	]
+}

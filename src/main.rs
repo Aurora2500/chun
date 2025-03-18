@@ -32,14 +32,17 @@ fn main() {
 		Ok(ast) => ast,
 		Err(errs) => {
 			eprintln!("Parsing error:");
-			eprintln!("{:#?}", errs);
+			eprintln!("{errs:#?}",);
 			return;
 		}
 	};
-	if let Err(issues) = transform(&ast) {
-		eprintln!("Semantic issue: {:#?}", issues);
-		return;
-	}
-	let il = translate(&ast);
+	let program = match transform(&ast) {
+		Ok(prog) => prog,
+		Err(errs) => {
+			eprintln!("Semantic issue: {errs:#?}");
+			return;
+		}
+	};
+	let il = translate(&program);
 	println!("{}", il);
 }
