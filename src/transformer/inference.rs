@@ -1,6 +1,9 @@
 // does inference using algorithm W
 
-use std::collections::HashMap;
+use std::{
+	collections::{hash_map, HashMap},
+	ops,
+};
 
 use crate::types::{
 	ast::{self},
@@ -33,27 +36,57 @@ pub enum Constraint {
 	Integral,
 	Floating,
 	Numeric,
+	Predicate,
 }
 
-fn compatible_constraints(a: Constraint, b: Constraint) -> bool {
-	match (a, b) {
-		(x, y) if x == y => true,
-		(Constraint::Numeric, _) | (_, Constraint::Numeric) => true,
-		_ => false,
+impl Constraint {
+	fn default_primitive(self) -> Option<Primitive> {
+		use Constraint::*;
+		use Primitive::*;
+		match self {
+			Integral => Some(I32),
+			Floating => Some(F32),
+			Numeric => None,
+			Predicate => Some(I32),
+		}
+	}
+}
+
+macro_rules! unordered_match {
+	($x:expr; $(($a:pat, $b:pat) $(if $guard:expr)? => $res:expr),+$(,)?) => {
+		match $x {
+			$(
+				($a, $b) | ($b, $a) $(if $guard)? => $res,
+			)+
+		}
+	};
+}
+
+impl ops::BitAnd for Constraint {
+	type Output = Option<Constraint>;
+
+	fn bitand(self, rhs: Self) -> Self::Output {
+		#![allow(unreachable_patterns)]
+		use Constraint::*;
+		unordered_match! { (self, rhs);
+			(Integral, Floating) => None,
+			(Predicate, Floating) => None,
+			(Numeric, Predicate) => Some(Integral),
+			(Integral, _) => Some(Integral),
+			(Floating, _) => Some(Floating),
+			(Predicate, _) => Some(Predicate),
+			(Numeric, _) => Some(Numeric),
+		}
 	}
 }
 
 #[derive(Debug, Default, Clone)]
 pub struct Subst {
 	substitutions: HashMap<Unifying, UniType>,
-	constraints: HashMap<Unifying, UniType>,
+	constraints: HashMap<Unifying, Constraint>,
 }
 
 impl Subst {
-	pub fn new() -> Self {
-		Self::default()
-	}
-
 	pub fn apply(&self, ty: &UniType) -> UniType {
 		match ty {
 			UniType::Uni(x) => self
@@ -90,13 +123,45 @@ impl Subst {
 	}
 
 	pub fn monomorph<'a: 'b, 'b>(&'a self, mut ty: &'b UniType) -> Option<MonoType> {
+		let mut c = match ty {
+			UniType::Uni(u) => self.constraints.get(u).cloned(),
+			_ => None,
+		};
 		loop {
 			match ty {
 				UniType::Mono(x) => return Some(x.clone()),
 				UniType::Uni(t) => match self.substitutions.get(&t) {
-					None => return None,
-					Some(t) => ty = t,
+					None => return c.and_then(|c| c.default_primitive().map(MonoType::Primitive)),
+					Some(t) => {
+						if let Some(cc) = c {
+							if let UniType::Uni(u) = t {
+								if let Some(oc) = self.constraints.get(u) {
+									c = cc & *oc;
+								}
+							}
+						}
+						ty = t
+					}
 				},
+			}
+		}
+	}
+
+	pub fn add_constraint(&mut self, u: Unifying, c: Constraint) -> bool {
+		let entry = self.constraints.entry(u);
+		match entry {
+			hash_map::Entry::Occupied(mut occupied) => {
+				let cs = occupied.get_mut();
+				if let Some(new_c) = c & *cs {
+					*cs = new_c;
+					true
+				} else {
+					false
+				}
+			}
+			hash_map::Entry::Vacant(vacant) => {
+				vacant.insert(c);
+				true
 			}
 		}
 	}
@@ -139,10 +204,16 @@ impl<'a> Inferencer<'a> {
 					.expect("Should have caught unreferenced variables by now");
 				return self.subst.unify(existing_v, expr_ty);
 			}
-			ExprVariant::Literal(x) => {
+			ExprVariant::Literal(_) => {
+				if let UniType::Uni(u) = expr_ty {
+					self.subst.add_constraint(*u, Constraint::Numeric);
+				}
 				return Some(expr_ty.clone());
 			}
 			ExprVariant::Binop { op, lhs, rhs } => {
+				if let UniType::Uni(u) = expr_ty {
+					self.subst.add_constraint(*u, Constraint::Numeric);
+				}
 				let lhs_ty = self.unify_expr(lhs, ctx, errs)?;
 				let rhs_ty = self.unify_expr(rhs, ctx, errs)?;
 				if let Some(res_ty) = self.subst.unify(&lhs_ty, &rhs_ty) {
@@ -157,6 +228,9 @@ impl<'a> Inferencer<'a> {
 				}
 			}
 			ExprVariant::Unop { op, expr } => {
+				if let UniType::Uni(u) = expr_ty {
+					self.subst.add_constraint(*u, Constraint::Numeric);
+				}
 				let ty = self.unify_expr(expr, ctx, errs);
 				if let Some(ty) = &ty {
 					self.subst.unify(expr_ty, ty);
@@ -208,9 +282,37 @@ impl<'a> Inferencer<'a> {
 				self.vars.insert(&ident, r#type.clone());
 				self.subst.unify(r#type, &expr_ty);
 			}
+			Stmt::Assignment {
+				ident: _,
+				r#type,
+				value,
+			} => {
+				let expr_ty = match self.unify_expr(value, ctx, errs) {
+					Some(t) => t,
+					None => return,
+				};
+				self.subst.unify(r#type, &expr_ty);
+			}
 			Stmt::Expr(expr) => {
 				self.unify_expr(expr, ctx, errs);
 			}
+			Stmt::If { cond, block } => {
+				if let Some(UniType::Uni(u)) = self.unify_expr(cond, ctx, errs) {
+					self.subst.add_constraint(u, Constraint::Predicate);
+				}
+				for stmt in block.iter() {
+					self.unify_stmt(stmt, ctx, errs);
+				}
+			}
+			Stmt::While { cond, block } => {
+				if let Some(UniType::Uni(u)) = self.unify_expr(cond, ctx, errs) {
+					self.subst.add_constraint(u, Constraint::Predicate);
+				}
+				for stmt in block.iter() {
+					self.unify_stmt(stmt, ctx, errs);
+				}
+			}
+			//TODO: finish all statements
 			_ => todo!(),
 		}
 	}
@@ -279,9 +381,38 @@ fn monomorph_stmt<'a>(
 				value,
 			}
 		}
+		Stmt::Assignment {
+			ident,
+			r#type,
+			value,
+		} => {
+			let r#type = infr.subst.monomorph(r#type)?;
+			let value = monomorph_expr(value, infr, errs)?;
+			Stmt::Assignment {
+				ident,
+				r#type,
+				value,
+			}
+		}
 		Stmt::Expr(expr) => {
 			let expr = monomorph_expr(expr, infr, errs)?;
 			Stmt::Expr(expr)
+		}
+		Stmt::If { cond, block } => {
+			let cond = monomorph_expr(cond, infr, errs)?;
+			let block = block
+				.iter()
+				.map(|stmt| monomorph_stmt(stmt, infr, errs))
+				.collect::<Option<_>>()?;
+			Stmt::If { cond, block }
+		}
+		Stmt::While { cond, block } => {
+			let cond = monomorph_expr(cond, infr, errs)?;
+			let block = block
+				.iter()
+				.map(|stmt| monomorph_stmt(stmt, infr, errs))
+				.collect::<Option<_>>()?;
+			Stmt::While { cond, block }
 		}
 		_ => todo!(),
 	})
@@ -331,4 +462,32 @@ pub(super) fn transform_to_monotype<'a>(
 	}
 
 	ast::Program(new_prog)
+}
+
+#[cfg(test)]
+mod test {
+	#[test]
+	fn constraint_joining() {
+		use super::Constraint;
+
+		let a = Constraint::Floating;
+		let b = Constraint::Numeric;
+		assert_eq!(a & b, b & a);
+		assert_eq!(a & b, Some(Constraint::Floating));
+
+		let a = Constraint::Floating;
+		let b = Constraint::Integral;
+		assert_eq!(a & b, b & a);
+		assert_eq!(a & b, None);
+
+		let a = Constraint::Predicate;
+		let b = Constraint::Numeric;
+		assert_eq!(a & b, b & a);
+		assert_eq!(a & b, Some(Constraint::Integral));
+
+		let a = Constraint::Predicate;
+		let b = Constraint::Floating;
+		assert_eq!(a & b, b & a);
+		assert_eq!(a & b, None);
+	}
 }

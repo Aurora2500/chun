@@ -269,6 +269,10 @@ pub enum Stmt {
 		r#type: Option<Spanned<String>>,
 		value: Box<Spanned<Expr>>,
 	},
+	Assignment {
+		ident: Spanned<String>,
+		expr: Box<Spanned<Expr>>,
+	},
 	Expr(Box<Spanned<Expr>>),
 	Return(Option<Box<Spanned<Expr>>>),
 	While {
@@ -282,26 +286,75 @@ pub enum Stmt {
 }
 
 fn parse_stmt() -> impl Parser<Token, Spanned<Stmt>, Error = ParserError<Token>> {
-	let binding = just(Token::Let)
-		.ignore_then(select! {|span| Token::Ident(x) => (x, span)})
-		.then_ignore(just(Token::Colon))
-		.then(select!(|span| Token::Ident(x) => (x, span)).or_not())
-		.then_ignore(just(Token::Assign))
-		.then(parse_expr())
-		.map_with_span(|((ident, r#type), value), span| {
-			(
-				Stmt::Binding {
-					ident,
-					r#type,
-					value: Box::new(value),
-				},
-				span,
-			)
-		});
+	recursive(|stmt| {
+		let binding = just(Token::Let)
+			.ignore_then(select! {|span| Token::Ident(x) => (x, span)})
+			.then_ignore(just(Token::Colon))
+			.then(select!(|span| Token::Ident(x) => (x, span)).or_not())
+			.then_ignore(just(Token::Assign))
+			.then(parse_expr())
+			.map_with_span(|((ident, r#type), value), span| {
+				(
+					Stmt::Binding {
+						ident,
+						r#type,
+						value: Box::new(value),
+					},
+					span,
+				)
+			});
 
-	let expr = parse_expr().map_with_span(|expr, span| (Stmt::Expr(Box::new(expr)), span));
+		let assignment = select! {|span| Token::Ident(x) => (x, span)}
+			.then_ignore(just(Token::Assign))
+			.then(parse_expr())
+			.map_with_span(|(ident, expr), span| {
+				(
+					Stmt::Assignment {
+						ident,
+						expr: Box::new(expr),
+					},
+					span,
+				)
+			});
 
-	choice((binding, expr)).then_ignore(just(Token::Semicolon))
+		let block = just(Token::OpenBracket)
+			.ignore_then(stmt.repeated())
+			.then_ignore(just(Token::CloseBracket));
+
+		let if_stmt = just(Token::If)
+			.ignore_then(parse_expr())
+			.then(block.clone())
+			.map_with_span(|(condition, block), span| {
+				(
+					Stmt::If {
+						condition: Box::new(condition),
+						block,
+					},
+					span,
+				)
+			});
+
+		let while_stmt = just(Token::While)
+			.ignore_then(parse_expr())
+			.then(block.clone())
+			.map_with_span(|(cond, block), span| {
+				(
+					Stmt::While {
+						condition: Box::new(cond),
+						block,
+					},
+					span,
+				)
+			});
+
+		let expr = parse_expr().map_with_span(|expr, span| (Stmt::Expr(Box::new(expr)), span));
+
+		choice((
+			if_stmt,
+			while_stmt,
+			choice((binding, assignment, expr)).then_ignore(just(Token::Semicolon)),
+		))
+	})
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

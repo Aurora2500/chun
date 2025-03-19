@@ -34,6 +34,11 @@ pub enum Stmt<'a, Ty = MonoType> {
 		r#type: Ty,
 		value: Expr<'a, Ty>,
 	},
+	Assignment {
+		ident: &'a str,
+		r#type: Ty,
+		value: Expr<'a, Ty>,
+	},
 	Expr(Expr<'a, Ty>),
 	Return(Option<Expr<'a, Ty>>),
 	While {

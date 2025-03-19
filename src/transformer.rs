@@ -131,11 +131,38 @@ fn transform_stmt<'a>(
 				r#type,
 			});
 		}
+		parser::Stmt::Assignment {
+			ident: (ident, _),
+			expr,
+		} => {
+			let value = transform_expr((&expr.0, expr.1.clone()), ctx, errs)?;
+			return Some(ast::Stmt::Assignment {
+				ident,
+				value,
+				r#type: ctx.new_uni(),
+			});
+		}
 		parser::Stmt::Expr(expr) => {
 			return transform_expr((&expr.0, expr.1.clone()), ctx, errs).map(ast::Stmt::Expr);
 		}
+		parser::Stmt::If { condition, block } => {
+			let cond = transform_expr((&condition.0, condition.1.clone()), ctx, errs)?;
+			let block = block
+				.iter()
+				.map(|stmt| transform_stmt(&stmt.0, ctx, errs))
+				.collect::<Option<_>>()?;
+			return Some(ast::Stmt::If { cond, block });
+		}
+		parser::Stmt::While { condition, block } => {
+			let cond = transform_expr((&condition.0, condition.1.clone()), ctx, errs)?;
+			let block = block
+				.iter()
+				.map(|stmt| transform_stmt(&stmt.0, ctx, errs))
+				.collect::<Option<_>>()?;
+			return Some(ast::Stmt::While { cond, block });
+		}
 		//TODO: other expressions
-		_ => return todo!(),
+		_ => todo!(),
 	}
 }
 

@@ -35,16 +35,31 @@ impl<'a> TempVar<'a> {
 	}
 }
 
+struct Block(u8);
+
+impl Display for Block {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		write!(f, "@block_{}", self.0)
+	}
+}
+
 #[derive(Debug, Default)]
 struct Ctx {
 	temp_count: u8,
+	block_count: u8,
 }
 
 impl Ctx {
 	fn new_intermediate(&mut self) -> TempVar<'static> {
 		let tv = TempVar::new(self.temp_count);
 		self.temp_count += 1;
-		return tv;
+		tv
+	}
+
+	fn new_block(&mut self) -> Block {
+		let b = Block(self.block_count);
+		self.block_count += 1;
+		b
 	}
 }
 
@@ -174,6 +189,41 @@ fn translate_stmt(stmt: &Stmt, ctx: &mut Ctx, il: &mut String) {
 		} => {
 			let new_var = TempVar::from_var(&ident);
 			translate_expr(&value, Some(new_var), ctx, il);
+		}
+		Stmt::Assignment {
+			ident,
+			r#type: _,
+			value,
+		} => {
+			let new_var = TempVar::from_var(&ident);
+			translate_expr(&value, Some(new_var), ctx, il);
+		}
+		Stmt::If { cond, block } => {
+			let if_block = ctx.new_block();
+			let merge_block = ctx.new_block();
+
+			let cond = translate_expr(cond, None, ctx, il).expect("needs a tempvar");
+			il.push_str(&format!("\tjnz {cond}, {if_block}, {merge_block}\n"));
+			il.push_str(&format!("{if_block}\n"));
+			for stmt in block {
+				translate_stmt(stmt, ctx, il);
+			}
+			il.push_str(&format!("{merge_block}\n"));
+		}
+		Stmt::While { cond, block } => {
+			let test_block = ctx.new_block();
+			let loop_block = ctx.new_block();
+			let merge_block = ctx.new_block();
+
+			il.push_str(&format!("{test_block}\n"));
+			let cond = translate_expr(cond, None, ctx, il).expect("needs a tempvar");
+			il.push_str(&format!("\tjnz {cond}, {loop_block}, {merge_block}\n"));
+			il.push_str(&format!("{loop_block}\n"));
+			for stmt in block {
+				translate_stmt(stmt, ctx, il);
+			}
+			il.push_str(&format!("\tjmp {test_block}\n"));
+			il.push_str(&format!("{merge_block}\n"));
 		}
 		_ => todo!(),
 	}
