@@ -83,8 +83,9 @@ macro_rules! span_just {
 }
 
 pub fn parse_tokens() -> impl Parser<char, SpanVec<Token>, Error = ParserError<char>> {
-	// let single_line = just("//").then(take_until(newline())).ignored();
-	// let multi_line = just("/*").then(take_until(just("*/"))).ignored();
+	let single_line = just("//").then(take_until(newline())).ignored();
+	let multi_line = just("/*").then(take_until(just("*/"))).ignored();
+	let comment = single_line.or(multi_line);
 	choice((
 		choice((
 			span_keyword!("fn", Token::Fn),
@@ -137,7 +138,7 @@ pub fn parse_tokens() -> impl Parser<char, SpanVec<Token>, Error = ParserError<c
 			.map_with_span(|label, span| (Token::Label(label), span)),
 	))
 	.padded()
-	// .padded_by(single_line.or(multi_line))
+	.padded_by(comment.padded().repeated())
 	.repeated()
 	.map(SpanVec)
 	.then_ignore(end())
@@ -459,4 +460,31 @@ pub fn parse_program() -> impl Parser<Token, Program, Error = ParserError<Token>
 		.repeated()
 		.then_ignore(end())
 		.map(Program)
+}
+
+#[cfg(test)]
+mod test {
+	use chumsky::Parser;
+
+	use crate::parser::Token;
+
+	use super::parse_tokens;
+
+	#[test]
+	fn tokenize_comments() {
+		let prog = "
+		let // thing\n
+		if
+		";
+
+		let tokens = parse_tokens()
+			.parse(prog)
+			.unwrap()
+			.0
+			.into_iter()
+			.map(|x| x.0)
+			.collect::<Vec<_>>();
+
+		assert_eq!(tokens, vec![Token::Let, Token::If])
+	}
 }
