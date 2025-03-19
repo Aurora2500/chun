@@ -289,8 +289,11 @@ fn parse_stmt() -> impl Parser<Token, Spanned<Stmt>, Error = ParserError<Token>>
 	recursive(|stmt| {
 		let binding = just(Token::Let)
 			.ignore_then(select! {|span| Token::Ident(x) => (x, span)})
-			.then_ignore(just(Token::Colon))
-			.then(select!(|span| Token::Ident(x) => (x, span)).or_not())
+			.then(
+				just(Token::Colon)
+					.ignore_then(select!(|span| Token::Ident(x) => (x, span)))
+					.or_not(),
+			)
 			.then_ignore(just(Token::Assign))
 			.then(parse_expr())
 			.map_with_span(|((ident, r#type), value), span| {
