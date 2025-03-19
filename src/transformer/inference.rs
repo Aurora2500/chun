@@ -7,7 +7,7 @@ use std::{
 
 use crate::types::{
 	ast::{self},
-	MonoType, Primitive,
+	MonoType, Scalar,
 };
 
 use super::{error::SemanticError, Ctx};
@@ -40,9 +40,9 @@ pub enum Constraint {
 }
 
 impl Constraint {
-	fn default_primitive(self) -> Option<Primitive> {
+	fn default_primitive(self) -> Option<Scalar> {
 		use Constraint::*;
-		use Primitive::*;
+		use Scalar::*;
 		match self {
 			Integral => Some(I32),
 			Floating => Some(F32),
@@ -131,7 +131,7 @@ impl Subst {
 			match ty {
 				UniType::Mono(x) => return Some(x.clone()),
 				UniType::Uni(t) => match self.substitutions.get(&t) {
-					None => return c.and_then(|c| c.default_primitive().map(MonoType::Primitive)),
+					None => return c.and_then(|c| c.default_primitive().map(MonoType::Scalar)),
 					Some(t) => {
 						if let Some(cc) = c {
 							if let UniType::Uni(u) = t {
@@ -170,6 +170,7 @@ impl Subst {
 #[derive(Debug, Default, Clone)]
 struct Inferencer<'a> {
 	vars: HashMap<&'a str, UniType>,
+	func_ret: Option<UniType>,
 	subst: Subst,
 }
 
@@ -183,6 +184,7 @@ impl<'a> Inferencer<'a> {
 			self.vars
 				.insert(param.name, UniType::Mono(param.r#type.clone()));
 		}
+		self.func_ret = Some(UniType::Mono(sig.return_type.clone()));
 	}
 
 	pub fn unify_expr(
@@ -312,8 +314,20 @@ impl<'a> Inferencer<'a> {
 					self.unify_stmt(stmt, ctx, errs);
 				}
 			}
-			//TODO: finish all statements
-			_ => todo!(),
+			Stmt::Return(expr) => {
+				if let Some(ret_ty) = self.func_ret.clone() {
+					if let Some(expr) = expr {
+						if let Some(expr_ty) = self.unify_expr(expr, ctx, errs) {
+							if self.subst.unify(&ret_ty, &expr_ty).is_none() {
+								errs.push(SemanticError::IncompatibleTypes {
+									a: ret_ty.clone(),
+									b: expr_ty,
+								});
+							}
+						}
+					}
+				}
+			}
 		}
 	}
 }
@@ -414,7 +428,14 @@ fn monomorph_stmt<'a>(
 				.collect::<Option<_>>()?;
 			Stmt::While { cond, block }
 		}
-		_ => todo!(),
+		Stmt::Return(expr) => {
+			let expr = if let Some(expr) = expr {
+				Some(monomorph_expr(expr, infr, errs)?)
+			} else {
+				None
+			};
+			Stmt::Return(expr)
+		}
 	})
 }
 

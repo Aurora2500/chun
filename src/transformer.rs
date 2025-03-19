@@ -11,7 +11,7 @@ use inference::{transform_to_monotype, UniCount, UniType};
 
 use crate::{
 	parser,
-	types::{ast, parse_primitive, MonoType},
+	types::{ast, parse_scalar, MonoType},
 };
 
 #[derive(Default, Clone)]
@@ -32,7 +32,6 @@ fn transform_expr<'a>(
 	ctx: &mut Ctx,
 	errs: &mut Vec<SemanticError>,
 ) -> Option<ast::Expr<'a, UniType>> {
-	//TODO: fix types
 	match ast.0 {
 		parser::Expr::Literal(x) => {
 			return Some(ast::Expr {
@@ -116,8 +115,8 @@ fn transform_stmt<'a>(
 		} => {
 			let value = transform_expr((&value.0, value.1.clone()), ctx, errs)?;
 			let r#type = match r#type {
-				Some((ty, span)) => match parse_primitive(ty, span.clone()) {
-					Ok(x) => UniType::Mono(MonoType::Primitive(x)),
+				Some((ty, span)) => match parse_scalar(ty, span.clone()) {
+					Ok(x) => UniType::Mono(MonoType::Scalar(x)),
 					Err(e) => {
 						errs.push(e);
 						return None;
@@ -125,25 +124,25 @@ fn transform_stmt<'a>(
 				},
 				None => ctx.new_uni(),
 			};
-			return Some(ast::Stmt::Binding {
+			Some(ast::Stmt::Binding {
 				ident,
 				value,
 				r#type,
-			});
+			})
 		}
 		parser::Stmt::Assignment {
 			ident: (ident, _),
 			expr,
 		} => {
 			let value = transform_expr((&expr.0, expr.1.clone()), ctx, errs)?;
-			return Some(ast::Stmt::Assignment {
+			Some(ast::Stmt::Assignment {
 				ident,
 				value,
 				r#type: ctx.new_uni(),
-			});
+			})
 		}
 		parser::Stmt::Expr(expr) => {
-			return transform_expr((&expr.0, expr.1.clone()), ctx, errs).map(ast::Stmt::Expr);
+			transform_expr((&expr.0, expr.1.clone()), ctx, errs).map(ast::Stmt::Expr)
 		}
 		parser::Stmt::If { condition, block } => {
 			let cond = transform_expr((&condition.0, condition.1.clone()), ctx, errs)?;
@@ -151,7 +150,7 @@ fn transform_stmt<'a>(
 				.iter()
 				.map(|stmt| transform_stmt(&stmt.0, ctx, errs))
 				.collect::<Option<_>>()?;
-			return Some(ast::Stmt::If { cond, block });
+			Some(ast::Stmt::If { cond, block })
 		}
 		parser::Stmt::While { condition, block } => {
 			let cond = transform_expr((&condition.0, condition.1.clone()), ctx, errs)?;
@@ -159,18 +158,24 @@ fn transform_stmt<'a>(
 				.iter()
 				.map(|stmt| transform_stmt(&stmt.0, ctx, errs))
 				.collect::<Option<_>>()?;
-			return Some(ast::Stmt::While { cond, block });
+			Some(ast::Stmt::While { cond, block })
 		}
-		//TODO: other expressions
-		_ => todo!(),
+		parser::Stmt::Return(expr) => {
+			let expr = if let Some(expr) = expr {
+				Some(transform_expr((&expr.0, expr.1.clone()), ctx, errs)?)
+			} else {
+				None
+			};
+			Some(ast::Stmt::Return(expr))
+		}
 	}
 }
 
 fn transform_fnparam(param: &parser::FnParam) -> Result<ast::FnParam, SemanticError> {
-	let r#type = parse_primitive(&param.r#type.0, param.r#type.1.clone())?;
+	let r#type = parse_scalar(&param.r#type.0, param.r#type.1.clone())?;
 	Ok(ast::FnParam {
 		name: &param.name.0,
-		r#type: MonoType::Primitive(r#type),
+		r#type: MonoType::Scalar(r#type),
 	})
 }
 
@@ -190,8 +195,8 @@ fn transform_fnsig<'a>(
 		})
 		.collect::<Option<_>>()?;
 	let return_type = match &sig.return_type {
-		Some((ty, span)) => match parse_primitive(&ty, span.clone()) {
-			Ok(ty) => Some(MonoType::Primitive(ty)),
+		Some((ty, span)) => match parse_scalar(&ty, span.clone()) {
+			Ok(ty) => Some(MonoType::Scalar(ty)),
 			Err(e) => {
 				errs.push(e);
 				None

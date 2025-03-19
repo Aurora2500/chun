@@ -4,7 +4,7 @@ use crate::{
 	parser::{Binop, Unop},
 	types::{
 		ast::{self, Expr, ExprVariant, FnBody, Stmt},
-		MonoType, Primitive,
+		MonoType, Scalar,
 	},
 };
 
@@ -65,19 +65,19 @@ impl Ctx {
 
 fn mono_to_ty(m: MonoType) -> Option<&'static str> {
 	match m {
-		MonoType::Primitive(p) => Some(match p {
-			Primitive::I32 | Primitive::U32 => "w",
-			Primitive::I64 | Primitive::U64 => "l",
-			Primitive::F32 => "s",
-			Primitive::F64 => "d",
+		MonoType::Scalar(s) => Some(match s {
+			Scalar::I32 | Scalar::U32 => "w",
+			Scalar::I64 | Scalar::U64 => "l",
+			Scalar::F32 => "s",
+			Scalar::F64 => "d",
 		}),
 		_ => None,
 	}
 }
 
-fn assert_primitive(m: MonoType) -> Primitive {
+fn assert_scalar(m: MonoType) -> Scalar {
 	match m {
-		MonoType::Primitive(p) => p,
+		MonoType::Scalar(p) => p,
 		MonoType::Unit => panic!("assert monotype to primitive failed"),
 	}
 }
@@ -142,12 +142,12 @@ fn translate_expr<'a>(
 			Some(var)
 		}
 		ExprVariant::FnCall { func, params } => {
-			let param_vars: Vec<(Option<TempVar<'a>>, Primitive)> = params
+			let param_vars: Vec<(Option<TempVar<'a>>, Scalar)> = params
 				.iter()
 				.map(|expr| {
 					(
 						translate_expr(&expr, None, ctx, il),
-						assert_primitive(expr.r#type.clone()),
+						assert_scalar(expr.r#type.clone()),
 					)
 				})
 				.collect();
@@ -162,8 +162,8 @@ fn translate_expr<'a>(
 			}
 			il.push_str(&format!("call ${} (", func));
 			for (param, param_ty) in param_vars {
-				let param_ty = mono_to_ty(MonoType::Primitive(param_ty))
-					.expect("param type shouldn't be unit");
+				let param_ty =
+					mono_to_ty(MonoType::Scalar(param_ty)).expect("param type shouldn't be unit");
 				let param = param.expect("param should be referable");
 				il.push_str(&format!("{param_ty} {param}, "));
 			}
@@ -225,7 +225,14 @@ fn translate_stmt(stmt: &Stmt, ctx: &mut Ctx, il: &mut String) {
 			il.push_str(&format!("\tjmp {test_block}\n"));
 			il.push_str(&format!("{merge_block}\n"));
 		}
-		_ => todo!(),
+		Stmt::Return(expr) => {
+			if let Some(expr) = expr {
+				let ret_var = translate_expr(expr, None, ctx, il).expect("need a tempvar");
+				il.push_str(&format!("\t ret {ret_var}\n"));
+			} else {
+				il.push_str("\tret\n");
+			}
+		}
 	}
 }
 

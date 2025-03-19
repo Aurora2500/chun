@@ -347,12 +347,16 @@ fn parse_stmt() -> impl Parser<Token, Spanned<Stmt>, Error = ParserError<Token>>
 				)
 			});
 
+		let ret_stmt = just(Token::Return)
+			.ignore_then(parse_expr().or_not())
+			.map_with_span(|expr, span| (Stmt::Return(expr.map(Box::new)), span));
+
 		let expr = parse_expr().map_with_span(|expr, span| (Stmt::Expr(Box::new(expr)), span));
 
 		choice((
 			if_stmt,
 			while_stmt,
-			choice((binding, assignment, expr)).then_ignore(just(Token::Semicolon)),
+			choice((binding, assignment, expr, ret_stmt)).then_ignore(just(Token::Semicolon)),
 		))
 	})
 }

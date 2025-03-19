@@ -5,7 +5,7 @@ use crate::transformer::error::SemanticError;
 pub mod ast;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Primitive {
+pub enum Scalar {
 	I32,
 	I64,
 	U32,
@@ -17,11 +17,11 @@ pub enum Primitive {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MonoType {
 	Unit,
-	Primitive(Primitive),
+	Scalar(Scalar),
 }
 
-pub fn parse_primitive(ty: &str, span: Range<usize>) -> Result<Primitive, SemanticError> {
-	use Primitive::*;
+pub fn parse_scalar(ty: &str, span: Range<usize>) -> Result<Scalar, SemanticError> {
+	use Scalar::*;
 	Ok(match ty {
 		"i32" => I32,
 		"u32" => U32,
