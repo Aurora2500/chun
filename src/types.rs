@@ -12,6 +12,7 @@ pub enum Scalar {
 	U64,
 	F32,
 	F64,
+	Bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

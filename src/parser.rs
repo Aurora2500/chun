@@ -3,7 +3,7 @@ pub mod error;
 use std::ops::Range;
 
 use chumsky::{
-	prelude::{choice, end, just, take_until, todo},
+	prelude::{choice, end, just, take_until},
 	recursive::recursive,
 	select,
 	text::{digits, ident, keyword, newline, TextParser},
@@ -28,9 +28,10 @@ impl<'a, T: Clone + 'a + 'static>
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Token {
-	Literal(i32),
+	Integral(i64),
 	Ident(String),
-	Label(String),
+	True,
+	False,
 	Fn,
 	Extern,
 	Return,
@@ -88,6 +89,8 @@ pub fn parse_tokens() -> impl Parser<char, SpanVec<Token>, Error = ParserError<c
 	let comment = single_line.or(multi_line);
 	choice((
 		choice((
+			span_keyword!("true", Token::True),
+			span_keyword!("false", Token::False),
 			span_keyword!("fn", Token::Fn),
 			span_keyword!("let", Token::Let),
 			span_keyword!("extern", Token::Extern),
@@ -130,12 +133,9 @@ pub fn parse_tokens() -> impl Parser<char, SpanVec<Token>, Error = ParserError<c
 		span_just!(')', Token::CloseParen),
 		ident().map_with_span(|x, span| (Token::Ident(x), span)),
 		digits(10)
-			.from_str::<i32>()
+			.from_str::<i64>()
 			.unwrapped()
-			.map_with_span(|x, span| (Token::Literal(x), span)),
-		ident()
-			.then_ignore(just(':'))
-			.map_with_span(|label, span| (Token::Label(label), span)),
+			.map_with_span(|x, span| (Token::Integral(x), span)),
 	))
 	.padded()
 	.padded_by(comment.padded().repeated())
@@ -171,7 +171,8 @@ pub enum Binop {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Expr {
 	Var(String),
-	Literal(i32),
+	Integral(i64),
+	Boolean(bool),
 	Unop {
 		op: Unop,
 		expr: Box<Spanned<Expr>>,
@@ -214,10 +215,11 @@ macro_rules! binary_op {
 fn parse_expr() -> impl Parser<Token, Spanned<Expr>, Error = ParserError<Token>> {
 	recursive(|expr| {
 		let lit = select! { |span|
-			Token::Literal(x) => (Expr::Literal(x), span),
+			Token::Integral(x) => (Expr::Integral(x), span),
+			Token::True => (Expr::Boolean(true), span),
+			Token::False => (Expr::Boolean(false), span),
 			Token::Ident(x) => (Expr::Var(x), span),
 		};
-
 		let fncall = select! {|span| Token::Ident(x) => (x, span)}
 			.then(
 				expr.clone()

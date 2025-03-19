@@ -12,7 +12,7 @@ use crate::{
 enum TempVar<'a> {
 	Intermediate(u8),
 	Named(&'a str),
-	Constant(i32),
+	Constant(i64),
 }
 
 impl Display for TempVar<'_> {
@@ -66,7 +66,7 @@ impl Ctx {
 fn mono_to_ty(m: MonoType) -> Option<&'static str> {
 	match m {
 		MonoType::Scalar(s) => Some(match s {
-			Scalar::I32 | Scalar::U32 => "w",
+			Scalar::I32 | Scalar::U32 | Scalar::Bool => "w",
 			Scalar::I64 | Scalar::U64 => "l",
 			Scalar::F32 => "s",
 			Scalar::F64 => "d",
@@ -91,12 +91,18 @@ fn translate_expr<'a>(
 	let Expr { r#type, expr } = expr;
 	let val_type = mono_to_ty(r#type.clone());
 	match expr {
-		ExprVariant::Literal(x) => {
+		ExprVariant::Integral(x) => {
 			let val_type = val_type.unwrap();
 			if let Some(var) = immediate {
 				il.push_str(&format!("\t{var} = {val_type} copy {x}\n"));
 			}
 			Some(TempVar::Constant(*x))
+		}
+		ExprVariant::Boolean(b) => {
+			if let Some(var) = immediate {
+				il.push_str(&format!("\t{var} = w copy {}", (*b) as i64));
+			}
+			Some(TempVar::Constant((*b) as i64))
 		}
 		ExprVariant::Var(x) => {
 			let val_type = val_type.unwrap();

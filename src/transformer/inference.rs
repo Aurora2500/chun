@@ -31,6 +31,12 @@ pub enum UniType {
 	Mono(MonoType),
 }
 
+impl From<MonoType> for UniType {
+	fn from(value: MonoType) -> Self {
+		Self::Mono(value)
+	}
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Constraint {
 	Integral,
@@ -204,13 +210,17 @@ impl<'a> Inferencer<'a> {
 					.vars
 					.get(v)
 					.expect("Should have caught unreferenced variables by now");
-				return self.subst.unify(existing_v, expr_ty);
+				self.subst.unify(existing_v, expr_ty)
 			}
-			ExprVariant::Literal(_) => {
+			ExprVariant::Integral(_) => {
 				if let UniType::Uni(u) = expr_ty {
 					self.subst.add_constraint(*u, Constraint::Numeric);
 				}
-				return Some(expr_ty.clone());
+				Some(expr_ty.clone())
+			}
+			ExprVariant::Boolean(_) => {
+				let bool_ty = MonoType::Scalar(Scalar::Bool).into();
+				self.subst.unify(expr_ty, &bool_ty)
 			}
 			ExprVariant::Binop { op, lhs, rhs } => {
 				if let UniType::Uni(u) = expr_ty {
@@ -237,7 +247,7 @@ impl<'a> Inferencer<'a> {
 				if let Some(ty) = &ty {
 					self.subst.unify(expr_ty, ty);
 				}
-				return ty;
+				ty
 			}
 			ExprVariant::FnCall { func, params } => {
 				let sig = ctx.existing_funcs.get(func)?;
@@ -346,8 +356,9 @@ fn monomorph_expr<'a>(
 	Some(ast::Expr {
 		r#type,
 		expr: match expr {
-			ast::ExprVariant::Literal(x) => ast::ExprVariant::Literal(*x),
+			ast::ExprVariant::Integral(x) => ast::ExprVariant::Integral(*x),
 			ast::ExprVariant::Var(v) => ast::ExprVariant::Var(v),
+			ast::ExprVariant::Boolean(b) => ast::ExprVariant::Boolean(*b),
 			ast::ExprVariant::Unop { op, expr } => {
 				let expr = monomorph_expr(expr, infr, errs)?;
 				ast::ExprVariant::Unop {

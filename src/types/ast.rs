@@ -11,7 +11,8 @@ pub struct Expr<'a, Ty = MonoType> {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ExprVariant<'a, Ty = MonoType> {
 	Var(&'a str),
-	Literal(i32),
+	Integral(i64),
+	Boolean(bool),
 	Unop {
 		op: Unop,
 		expr: Box<Expr<'a, Ty>>,

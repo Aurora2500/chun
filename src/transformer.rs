@@ -11,7 +11,7 @@ use inference::{transform_to_monotype, UniCount, UniType};
 
 use crate::{
 	parser,
-	types::{ast, parse_scalar, MonoType},
+	types::{ast, parse_scalar, MonoType, Scalar},
 };
 
 #[derive(Default, Clone)]
@@ -33,10 +33,10 @@ fn transform_expr<'a>(
 	errs: &mut Vec<SemanticError>,
 ) -> Option<ast::Expr<'a, UniType>> {
 	match ast.0 {
-		parser::Expr::Literal(x) => {
+		parser::Expr::Integral(x) => {
 			return Some(ast::Expr {
 				r#type: ctx.new_uni(),
-				expr: ast::ExprVariant::Literal(*x),
+				expr: ast::ExprVariant::Integral(*x),
 			});
 		}
 		parser::Expr::Var(v) => {
@@ -48,6 +48,12 @@ fn transform_expr<'a>(
 			} else {
 				return None;
 			}
+		}
+		parser::Expr::Boolean(b) => {
+			return Some(ast::Expr {
+				r#type: MonoType::Scalar(Scalar::Bool).into(),
+				expr: ast::ExprVariant::Boolean(*b),
+			})
 		}
 		parser::Expr::FnCall { func, params } => {
 			if !ctx.existing_funcs.contains_key(func.0.as_str()) {
