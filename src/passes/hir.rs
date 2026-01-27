@@ -16,7 +16,7 @@ use crate::{
 
 pub fn hir_pass(ast: &TypedModule) -> HIR {
 	let mut t = Transformer::new();
-	dbg!(t.lower_module(ast))
+	t.lower_module(ast)
 }
 
 impl Transformer {
@@ -61,6 +61,7 @@ impl Transformer {
 		cfg.lower_block(self, &mut scope, body, Destination::Return);
 
 		HIRFn {
+			name: name.original.name.clone(),
 			params: vec![],
 			segments: cfg.segments,
 		}
@@ -85,8 +86,21 @@ impl CFG {
 		for stmt in stmts {
 			self.lower_stmt(trans, scope, stmt);
 		}
+		let ret = if let Some(tail) = tail {
+			self.lower_expr(trans, scope, tail)
+		} else {
+			None
+		};
 		for deferred_op in scope.defers.iter().rev() {
 			_ = self.lower_expr(trans, &mut scope.sub(), deferred_op);
+		}
+		let new_bb = self.get_id();
+		match dest {
+			Destination::None => {}
+			Destination::Return => {
+				self.terminate(HIRTerminator::Return { value: ret }, new_bb);
+			}
+			Destination::Symbol(hirsymbol) => todo!(),
 		}
 	}
 
@@ -124,8 +138,8 @@ impl CFG {
 				Some(HIRValue::Symbol(HIRSymbol::Symbol(binding.clone())))
 			}
 			TypedExpr::StrLiteral { span, value, type_ } => {
-				trans.push_str_const(value.clone());
-				return Some(HIRValue::Symbol(HIRSymbol::GlobalTemp(0)));
+				let str_const_sym = trans.push_str_const(value.clone());
+				return Some(HIRValue::Symbol(str_const_sym));
 			}
 			TypedExpr::IntLiteral {
 				span,
@@ -341,7 +355,9 @@ impl Transformer {
 		Self { anon_strs: vec![] }
 	}
 
-	fn push_str_const(&mut self, str: EcoString) {
+	fn push_str_const(&mut self, str: EcoString) -> HIRSymbol {
+		let id = self.anon_strs.len() as u64;
 		self.anon_strs.push(str);
+		HIRSymbol::Global(id)
 	}
 }

@@ -1,5 +1,6 @@
 #![allow(unused)]
 use crate::{
+	lower::lower_to_llvm,
 	parser::{lexer::lex, parse_module},
 	passes::pass_all,
 };
@@ -42,5 +43,7 @@ fn main() {
 fn main() {
 	let ast = parse_module(SRC);
 
-	pass_all(ast);
+	let hir = pass_all(ast);
+	let llvm = lower_to_llvm(&hir);
+	println!("{llvm}");
 }

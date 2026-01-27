@@ -19,6 +19,7 @@ pub struct HIRExternFn {}
 
 #[derive(Debug, Clone)]
 pub struct HIRFn {
+	pub name: EcoString,
 	pub params: Vec<HIRParam>,
 	pub segments: Vec<HIRBasicBlock>,
 }
@@ -36,7 +37,7 @@ pub struct HIRBasicBlock {
 #[derive(Debug, Clone)]
 pub enum HIRTerminator {
 	Return {
-		value: Option<HIRSymbol>,
+		value: Option<HIRValue>,
 	},
 	Jump {
 		to: u64,
@@ -56,7 +57,7 @@ pub enum HIRStmt {
 #[derive(Debug, Clone)]
 pub enum HIRSymbol {
 	LocalTemp(u64),
-	GlobalTemp(u64),
+	Global(u64),
 	Symbol(Symbol),
 }
 
